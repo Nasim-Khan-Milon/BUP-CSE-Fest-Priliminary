@@ -58,6 +58,8 @@ def interpret_energy_directives(
             ),
         )
 
+        
+
         return validated_directives
 
     except ValueError as exc:
