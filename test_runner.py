@@ -511,7 +511,7 @@ def validate_response_structure(case, result):
         "total_grid_kwh",
         "total_cost_bdt",
         "peak_grid_kwh",
-        # "plan_summary",
+        "plan_summary",
     ]
 
     for field in required_fields:

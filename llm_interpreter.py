@@ -1,5 +1,6 @@
 from models import DirectiveInterpretation
 from ai import text_to_text
+from optimizer import solve_energy_schedule
 
 from typing import List, Dict, Any
 
@@ -156,15 +157,22 @@ def generate_plan_summary_with_gemini(
     system_prompt = """
 You are an AI assistant for a smart campus energy grid.
 
-Generate a concise one-sentence summary of the
-daily energy optimization plan.
+Generate exactly one concise sentence describing the practical effect of the active operator directive on the energy plan.
 
 Rules:
-- Do not use markdown.
-- Do not invent numerical values.
-- Do not invent operator rules.
-- Do not claim battery behavior unless supported by the input.
-- Only use the provided solver status, rules, and cost.
+
+* Return exactly one sentence with no markdown or extra text.
+* Use only information explicitly provided in the input, including directive interpretations, structured adjustments, hourly plan, solver status, and cost.
+* If an active directive exists, it MUST be the main subject of the summary.
+* Describe what the directive causes the plan to do, rather than merely stating that it was enforced or that the schedule is optimal.
+* Prefer concrete effects such as "keeps battery discharge at zero", "maintains the reserve", or "limits grid usage" when directly supported by the input.
+* Use directive types, hours, and values exactly as provided.
+* Do not invent numerical values, rules, constraints, or battery behavior.
+* Do not infer charging, discharging, grid usage, or optimization behavior unless supported by the hourly plan or solver result.
+* Do not perform new calculations.
+* Do not mention no_op as an active constraint.
+
+
 """
 
     user_prompt = f"""
