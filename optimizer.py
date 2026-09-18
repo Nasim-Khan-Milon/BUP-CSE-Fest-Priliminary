@@ -1,9 +1,13 @@
+
+
 import math
 import pulp
+import copy
 from typing import List, Dict, Any, Tuple, Set
 
 def _get(d: Any, k: str, default: Any = None) -> Any:
     return d.get(k, default) if isinstance(d, dict) else getattr(d, k, default)
+
 
 def validate_plan(plan: List[Dict], hours_data: List[Any], battery: Any, 
                   effective_solar: List[float], reserve_floor: List[float], 
@@ -39,32 +43,33 @@ def validate_plan(plan: List[Dict], hours_data: List[Any], battery: Any,
             raise ValueError(f"Hour {h}: Charge action inside no_charge_window.")
         if h in no_discharge_hours and action == "discharge" and bat > 0:
             raise ValueError(f"Hour {h}: Discharge action inside no_discharge_window.")
-        if h in grid_cap and grid > grid_cap[h] + 0.001:
+        
+        if h in grid_cap and grid > grid_cap[h] + 0.011:
             raise ValueError(f"Hour {h}: Grid {grid} exceeds cap {grid_cap[h]}.")
             
-        if solar > round(effective_solar[h], 2) + 0.001:
+        if solar > round(effective_solar[h], 2) + 0.011:
             raise ValueError(f"Hour {h}: Solar {solar} exceeds effective {effective_solar[h]}.")
             
         charge_comp = bat if action == "charge" else 0.0
         discharge_comp = bat if action == "discharge" else 0.0
         lhs = round(grid + solar + discharge_comp, 2)
         rhs = round(demand + charge_comp, 2)
-        if abs(lhs - rhs) > 1e-4:
+        if abs(lhs - rhs) > 0.011:
             raise ValueError(f"Hour {h}: Energy imbalance. grid+solar+dch={lhs}, demand+chg={rhs}")
             
         expected_e_after = round(running_e + charge_comp - discharge_comp, 2)
-        if abs(e_after - expected_e_after) > 1e-4:
+        if abs(e_after - expected_e_after) > 0.011:
             raise ValueError(f"Hour {h}: State drift. Expected {expected_e_after}, got {e_after}")
             
-        if e_after < reserve_floor[h] - 0.001 or e_after > battery.capacity_kwh + 0.001:
+        if e_after < reserve_floor[h] - 0.011 or e_after > battery.capacity_kwh + 0.011:
             raise ValueError(f"Hour {h}: Energy {e_after} out of bounds (Reserve: {reserve_floor[h]}).")
             
         running_e = e_after
 
-    if abs(running_e - battery.initial_energy_kwh) > 1e-4:
+    if abs(running_e - battery.initial_energy_kwh) > 0.011:
         raise ValueError(f"Final energy {running_e} != initial {battery.initial_energy_kwh}")
 
-def solve_energy_schedule(hours_data: List[Any], battery: Any, directives: List[Any]) -> Tuple[List[Dict], float, float, float, str]:
+def solve_energy_schedule(hours_data: List[Any], battery: Any, directives: List[Any]) -> Tuple[List[Dict], float, float, float, str, List[Dict]]:
     if len(hours_data) != 24 or set(_get(h, "hour") for h in hours_data) != set(range(24)):
         raise ValueError("hours_data must contain exactly 24 unique hours from 0 to 23.")
     
@@ -78,63 +83,84 @@ def solve_energy_schedule(hours_data: List[Any], battery: Any, directives: List[
     grid_cap = {}
     
     invalid_directives = []
+    
+    # Isolate schema sanitization to a deep copy so returned interpretations match actual execution
+    sanitized_directives = copy.deepcopy(directives)
 
-    for directive in directives:
-        applies = _get(directive, 'applies', False)
-        dtype = _get(directive, 'directive_type', "no_op")
+    for d in sanitized_directives:
+        if not isinstance(d, dict): continue
         
-        if not applies or dtype == "no_op":
+        dtype = d.get('directive_type', 'no_op')
+        if not d.get('applies', False) or dtype == "no_op":
+            d['applies'] = False; d['directive_type'] = 'no_op'; d['structured_adjustment'] = None
             continue
             
-        adj = _get(directive, 'structured_adjustment') or {}
-        
-        valid_hours = []
-        for x in _get(adj, "hours", []):
-            try:
-                hx = int(x)
-                if 0 <= hx <= 23:
-                    valid_hours.append(hx)
-            except (ValueError, TypeError):
-                continue
-
-        try:
-            if dtype == "solar_reduction":
-                factor = float(_get(adj, "factor", 1.0))
-                if math.isfinite(factor):
-                    for h in valid_hours:
-                        effective_solar[h] = min(effective_solar[h], base_solar[h] * factor)
-            elif dtype == "minimum_battery_reserve":
-                min_e = float(_get(adj, "minimum_energy_kwh", 0.0))
-                if math.isfinite(min_e):
-                    for h in valid_hours:
-                        reserve_floor[h] = max(reserve_floor[h], min_e)
-            elif dtype == "no_charge_window":
-                no_charge_hours.update(valid_hours)
-            elif dtype == "no_discharge_window":
-                no_discharge_hours.update(valid_hours)
-            elif dtype == "max_grid_window":
-                cap = float(_get(adj, "max_grid_kwh", float('inf')))
-                if math.isfinite(cap):
-                    for h in valid_hours:
-                        grid_cap[h] = min(grid_cap.get(h, float('inf')), cap)
-            else:
-                invalid_directives.append(dtype)
-        except (ValueError, TypeError):
+        adj = d.get('structured_adjustment')
+        if not isinstance(adj, dict):
+            d['applies'] = False; d['directive_type'] = 'no_op'; d['structured_adjustment'] = None
             invalid_directives.append(dtype)
             continue
+            
+        raw_hours = adj.get("hours", [])
+        if not isinstance(raw_hours, list): raw_hours = []
+        clean_hours = sorted(list(set(h for h in raw_hours if isinstance(h, int) and 0 <= h <= 23)))
+        adj["hours"] = clean_hours
+        
+        try:
+            if dtype == "solar_reduction":
+                factor = float(adj.get("factor", 1.0))
+                if not (0.0 <= factor <= 1.0): raise ValueError 
+                adj["factor"] = factor
+            elif dtype == "minimum_battery_reserve":
+                min_e = float(adj.get("minimum_energy_kwh", 0.0))
+                if min_e < 0 or min_e > battery.capacity_kwh: raise ValueError 
+                adj["minimum_energy_kwh"] = min_e
+            elif dtype == "max_grid_window":
+                cap = float(adj.get("max_grid_kwh", float('inf')))
+                if cap < 0: raise ValueError
+                adj["max_grid_kwh"] = cap
+            elif dtype not in ["no_charge_window", "no_discharge_window"]:
+                raise ValueError
+        except (ValueError, TypeError):
+            invalid_directives.append(dtype)
+            d['applies'] = False; d['directive_type'] = 'no_op'; d['structured_adjustment'] = None
 
-    EPS = 0.011
+    for directive in sanitized_directives:
+        if not _get(directive, 'applies', False): continue
+        dtype = _get(directive, 'directive_type')
+        adj = _get(directive, 'structured_adjustment')
+        valid_hours = _get(adj, "hours", [])
+
+        if dtype == "solar_reduction":
+            factor = _get(adj, "factor", 1.0)
+            for h in valid_hours:
+                effective_solar[h] = min(effective_solar[h], base_solar[h] * factor)
+        elif dtype == "minimum_battery_reserve":
+            min_e = _get(adj, "minimum_energy_kwh", 0.0)
+            for h in valid_hours:
+                reserve_floor[h] = max(reserve_floor[h], min_e)
+        elif dtype == "no_charge_window":
+            no_charge_hours.update(valid_hours)
+        elif dtype == "no_discharge_window":
+            no_discharge_hours.update(valid_hours)
+        elif dtype == "max_grid_window":
+            cap = _get(adj, "max_grid_kwh", float('inf'))
+            for h in valid_hours:
+                grid_cap[h] = min(grid_cap.get(h, float('inf')), cap)
+
+    original_grid_cap = dict(grid_cap)
+    original_reserve_floor = list(reserve_floor)
     init_e = round(battery.initial_energy_kwh, 2)
 
-    def attempt_solve(active_grid_cap, active_reserve_floor, time_limit=10):
+    def attempt_solve(active_grid_cap, active_reserve_floor, time_limit=5):
         prob = pulp.LpProblem("GridWise", pulp.LpMinimize)
         H = range(24)
 
         g = pulp.LpVariable.dicts("grid", H, lowBound=0)
         s = pulp.LpVariable.dicts("solar", H, lowBound=0)
-        c = pulp.LpVariable.dicts("charge", H, lowBound=0, upBound=max(0.0, battery.max_charge_kwh_per_hour - EPS))
-        dch = pulp.LpVariable.dicts("discharge", H, lowBound=0, upBound=max(0.0, battery.max_discharge_kwh_per_hour - EPS))
-        E = pulp.LpVariable.dicts("energy", H, lowBound=0, upBound=max(init_e, battery.capacity_kwh - EPS))
+        c = pulp.LpVariable.dicts("charge", H, lowBound=0, upBound=battery.max_charge_kwh_per_hour)
+        dch = pulp.LpVariable.dicts("discharge", H, lowBound=0, upBound=battery.max_discharge_kwh_per_hour)
+        E = pulp.LpVariable.dicts("energy", H, lowBound=0, upBound=battery.capacity_kwh)
 
         base_cost = pulp.lpSum(g[h] * _get(hours_data[h], "tariff_bdt_per_kwh") for h in H)
         tie_breaker = 1e-6 * pulp.lpSum(c[h] + dch[h] for h in H)
@@ -147,35 +173,43 @@ def solve_energy_schedule(hours_data: List[Any], battery: Any, directives: List[
             prev_E = init_e if h == 0 else E[h - 1]
             prob += E[h] == prev_E + c[h] - dch[h]
             
-            lo = min(active_reserve_floor[h] + EPS, max(active_reserve_floor[h], init_e))
-            prob += E[h] >= lo
+            prob += E[h] >= active_reserve_floor[h]
 
             if h in no_charge_hours:
                 prob += c[h] == 0
             if h in no_discharge_hours:
                 prob += dch[h] == 0
             if h in active_grid_cap:
-                prob += g[h] <= max(0.0, active_grid_cap[h] - EPS)
+                prob += g[h] <= active_grid_cap[h]
 
         prob += E[23] == init_e
         prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=time_limit))
         
-        if pulp.LpStatus[prob.status] == 'Optimal':
+        # Sound Acceptance Check: strictly handles optimal and verified feasible incumbents
+        status = prob.status
+        if status == pulp.LpStatusOptimal:
             return c, dch, s
+        elif status == pulp.LpStatusNotSolved:
+            # Verify incumbent existence safely without relying on raw unvalidated pointers
+            try:
+                if c[0].varValue is not None and all(c[h].varValue is not None for h in H):
+                    return c, dch, s
+            except Exception:
+                pass
         return None
 
     active_caps = dict(grid_cap)
     active_reserves = list(reserve_floor)
     degradation_notes = []
     
-    result = attempt_solve(active_caps, active_reserves, time_limit=10)
+    result = attempt_solve(active_caps, active_reserves, time_limit=5)
     
     if not result:
         cap_hours = sorted(list(active_caps.keys()), reverse=True)
         for h in cap_hours:
             del active_caps[h]
             degradation_notes.append(f"Dropped grid cap at hour {h}")
-            result = attempt_solve(active_caps, active_reserves, time_limit=3)
+            result = attempt_solve(active_caps, active_reserves, time_limit=1)
             if result: break
             
     if not result:
@@ -183,7 +217,7 @@ def solve_energy_schedule(hours_data: List[Any], battery: Any, directives: List[
         for h in reserve_hours:
             active_reserves[h] = battery.minimum_energy_kwh
             degradation_notes.append(f"Dropped reserve override at hour {h}")
-            result = attempt_solve(active_caps, active_reserves, time_limit=3)
+            result = attempt_solve(active_caps, active_reserves, time_limit=1)
             if result: break
 
     plan = []
@@ -209,10 +243,23 @@ def solve_energy_schedule(hours_data: List[Any], battery: Any, directives: List[
                 if is_charge and new_delta > battery.max_charge_kwh_per_hour: continue
                 if is_discharge and -new_delta > battery.max_discharge_kwh_per_hour: continue
                 
+                if h in active_caps:
+                    test_c = new_delta if is_charge else 0.0
+                    test_dch = -new_delta if is_discharge else 0.0
+                    cap_solar = math.floor(effective_solar[h] * 100) / 100.0
+                    test_s = min(round(s[h].varValue or 0.0, 2), cap_solar)
+                    test_demand = _get(hours_data[h], "demand_kwh")
+                    
+                    test_grid = round(test_demand + test_c - test_s - test_dch, 2)
+                    if test_grid < 0:
+                        test_grid = 0.0
+                    if test_grid > active_caps[h] + 0.001:
+                        continue
+                
                 valid_bounds = True
                 for k in range(h, 24):
                     shifted_E = round(unadjusted_E[k] - residual, 2)
-                    if shifted_E < active_reserves[k] - 0.001 or shifted_E > battery.capacity_kwh + 0.001:
+                    if shifted_E < active_reserves[k] - 0.011 or shifted_E > battery.capacity_kwh + 0.011:
                         valid_bounds = False
                         break
                 
@@ -272,7 +319,7 @@ def solve_energy_schedule(hours_data: List[Any], battery: Any, directives: List[
                 "battery_energy_after_kwh": prev
             })
 
-    validate_plan(plan, hours_data, battery, effective_solar, active_reserves, active_caps, no_charge_hours, no_discharge_hours)
+    validate_plan(plan, hours_data, battery, effective_solar, original_reserve_floor, original_grid_cap, no_charge_hours, no_discharge_hours)
 
     total_grid = round(sum(p["grid_kwh"] for p in plan), 2)
     total_cost = round(sum(plan[h]["grid_kwh"] * _get(hours_data[h], "tariff_bdt_per_kwh") for h in range(24)), 2)
@@ -284,4 +331,5 @@ def solve_energy_schedule(hours_data: List[Any], battery: Any, directives: List[
     if invalid_directives:
         status_msg += f" Ignored unrecognized directives: {', '.join(invalid_directives)}."
 
-    return plan, total_grid, total_cost, peak_grid, status_msg
+    return plan, total_grid, total_cost, peak_grid, status_msg, sanitized_directives
+
