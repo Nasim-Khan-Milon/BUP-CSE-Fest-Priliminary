@@ -9,7 +9,7 @@ load_dotenv()
 
 
 T = TypeVar('T', bound=BaseModel)
-GEMINI_BASE_IMAGE_MODEL = "gemini-2.5-flash"
+GEMINI_BASE_IMAGE_MODEL = "gemini-3.8-flash"
 GEMINI_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 
