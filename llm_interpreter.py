@@ -32,7 +32,9 @@ Do not add hours that were not specified or logically included by the stated tim
    - For `solar_reduction`, the `factor` is the usable fraction remaining (0.0 to 1.0). "Drops to 20%" means factor is 0.2. "Reduced by 80%" means factor is 0.2.
 
 5.NO HALLUCINATION: 
-Use only information explicitly stated in the operator note and the permitted battery.capacity_kwh calculation. Do not infer missing times, values, limits, or directives. If the note cannot be safely mapped to exactly one supported directive because required information is missing, ambiguous, or unsupported, classify it as no_op.
+Use only information explicitly stated in the operator note and the permitted battery.capacity_kwh calculation. Do not invent missing times, values, limits, or directives.
+If the note clearly expresses one of the five supported directives, it MUST be classified as that directive and applies MUST be true. Do not classify a clearly stated supported directive as no_op.
+Use no_op only when the note is irrelevant to energy optimization or does not express any of the five supported directive types.
 
 === DIRECTIVE TYPES & SCHEMA ===
 You must output exactly one JSON object matching this schema. Choose exactly ONE of the 6 allowed directive_type values. The note_index must be copied exactly from the input. Do not add, remove, rename, or invent fields.
@@ -43,8 +45,10 @@ You must output exactly one JSON object matching this schema. Choose exactly ONE
     "Reduced by X%" means factor = 1 - X/100.
     "Drops to X%" means factor = X/100.
 Do not confuse "reduced by" with "drops to".
-2. minimum_battery_reserve: Emergency floor. 
-   - Required: {"hours": [int, ...], "minimum_energy_kwh": float}
+2. minimum_battery_reserve: Requires the battery to maintain at least the specified energy level during the specified hours.
+  Required: {"hours": [int, ...], "minimum_energy_kwh": float}
+  A percentage explicitly stated as a percentage of battery capacity MUST be converted using battery.capacity_kwh.
+  Example: "Keep at least 50% of the battery capacity" means minimum_energy_kwh = 0.50 × battery.capacity_kwh.
 3. no_charge_window: Battery cannot charge. 
    - Required: {"hours": [int, ...]}
 4. no_discharge_window: Battery cannot discharge. 
