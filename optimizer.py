@@ -246,7 +246,7 @@ def solve_energy_schedule(hours_data: List[Any], battery: Any, directives: List[
                 if h in active_caps:
                     test_c = new_delta if is_charge else 0.0
                     test_dch = -new_delta if is_discharge else 0.0
-                    cap_solar = math.floor(effective_solar[h] * 100) / 100.0
+                    cap_solar = round(effective_solar[h], 2)
                     test_s = min(round(s[h].varValue or 0.0, 2), cap_solar)
                     test_demand = _get(hours_data[h], "demand_kwh")
                     
