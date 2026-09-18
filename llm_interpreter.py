@@ -248,9 +248,7 @@ def process_scenario_endpoint(
         total_cost=total_cost,
     )
 
-    # ---------------------------------------------------------
-    # 3. Final API response
-    # ---------------------------------------------------------
+
 
     return {
         "scenario_id": scenario_id,
