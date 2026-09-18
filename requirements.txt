@@ -1,3 +1,6 @@
+google-genai
+ortools
 fastapi
-uvicorn
-requests
+uvicorn[standard]
+pydantic
+python-dotenv
