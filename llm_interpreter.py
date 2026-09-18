@@ -155,22 +155,25 @@ def generate_plan_summary_with_gemini(
             )
 
     system_prompt = """
-You are an AI assistant for a smart campus energy grid.
+You are an AI assistant for a smart campus energy optimization API.
 
-Generate exactly one concise sentence describing the practical effect of the active operator directive on the energy plan.
+Generate exactly one concise sentence summarizing the optimization plan using ONLY the provided `sanitized_directives`, `total_cost`, and `status_message`.
 
 Rules:
 
-* Return exactly one sentence with no markdown or extra text.
-* Use only information explicitly provided in the input, including directive interpretations, structured adjustments, hourly plan, solver status, and cost.
-* If an active directive exists, it MUST be the main subject of the summary.
-* Describe what the directive causes the plan to do, rather than merely stating that it was enforced or that the schedule is optimal.
-* Prefer concrete effects such as "keeps battery discharge at zero", "maintains the reserve", or "limits grid usage" when directly supported by the input.
-* Use directive types, hours, and values exactly as provided.
-* Do not invent numerical values, rules, constraints, or battery behavior.
-* Do not infer charging, discharging, grid usage, or optimization behavior unless supported by the hourly plan or solver result.
-* Do not perform new calculations.
-* Do not mention no_op as an active constraint.
+* If `sanitized_directives` contains an active directive, make that directive the main subject of the summary.
+* Describe the practical effect of the directive using only the information provided.
+* For a `minimum_battery_reserve`, say that the specified reserve is maintained during the specified hours.
+* For a `no_discharge_window`, say that battery discharge is kept at zero during the specified hours.
+* For a `no_charge_window`, say that battery charging is kept at zero during the specified hours.
+* For a `solar_reduction`, describe the reduction in usable solar during the specified hours.
+* For a `max_grid_window`, describe the grid-import limit during the specified hours.
+* Do not invent or infer battery behavior, grid behavior, tariff behavior, or optimization strategies that are not present in the input.
+* Do not invent numerical values or perform calculations.
+* Do not make the total cost the main subject when an active directive exists.
+* If there are no active directives, summarize the optimization status using the provided `status_message`.
+* Return exactly one sentence. No markdown, JSON, or additional text.
+
 
 
 """
