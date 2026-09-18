@@ -4,6 +4,8 @@ from optimizer import solve_energy_schedule
 
 from typing import List, Dict, Any
 
+from optimizer import solve_energy_schedule
+
 
 SYSTEM_PROMPT = """
 You are an expert energy-management directive interpreter for a smart campus optimization API. 
@@ -240,6 +242,7 @@ def process_scenario_endpoint(
         total_cost,
         peak_grid,
         status_msg,
+        sanitized_directives
     ) = solve_energy_schedule(
         hours_data,
         battery,
@@ -252,17 +255,15 @@ def process_scenario_endpoint(
 
     summary_text = generate_plan_summary_with_gemini(
         status_msg=status_msg,
-        directives=directive_interpretations,
+        directives=sanitized_directives,
         total_cost=total_cost,
     )
 
-    # ---------------------------------------------------------
-    # 3. Final API response
-    # ---------------------------------------------------------
+
 
     return {
         "scenario_id": scenario_id,
-        "directive_interpretation": directive_interpretations,
+        "directive_interpretation": sanitized_directives,
         "hourly_plan": plan,
         "total_grid_kwh": total_grid,
         "total_cost_bdt": total_cost,
