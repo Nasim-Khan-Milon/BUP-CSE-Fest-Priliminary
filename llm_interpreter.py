@@ -1,6 +1,8 @@
 from models import DirectiveInterpretation
 from ai import text_to_text
 
+from typing import List, Dict, Any
+
 
 SYSTEM_PROMPT = """
 You are an expert energy-management directive interpreter for a smart campus optimization API. 
@@ -112,3 +114,143 @@ def interpret_operator_notes(
         )
         for index, note in enumerate(operator_notes)
     ]
+
+def generate_plan_summary_with_gemini(
+    status_msg: str,
+    directives: List[Any],
+    total_cost: float,
+) -> str:
+    """
+    Generate a concise human-readable summary of the
+    optimized energy schedule using Gemini.
+    """
+
+    active_rules = []
+
+    for directive in directives:
+        applies = (
+            directive.get("applies", False)
+            if isinstance(directive, dict)
+            else getattr(directive, "applies", False)
+        )
+
+        directive_type = (
+            directive.get("directive_type", "no_op")
+            if isinstance(directive, dict)
+            else getattr(directive, "directive_type", "no_op")
+        )
+
+        # Handle Pydantic Enum
+        if hasattr(directive_type, "value"):
+            directive_type = directive_type.value
+
+        if applies and directive_type != "no_op":
+            active_rules.append(
+                directive_type.replace("_", " ")
+            )
+
+    system_prompt = """
+You are an AI assistant for a smart campus energy grid.
+
+Generate a concise one-sentence summary of the
+daily energy optimization plan.
+
+Rules:
+- Do not use markdown.
+- Do not invent numerical values.
+- Do not invent operator rules.
+- Do not claim battery behavior unless supported by the input.
+- Only use the provided solver status, rules, and cost.
+"""
+
+    user_prompt = f"""
+Solver Status:
+{status_msg}
+
+Operator Rules Enforced:
+{", ".join(active_rules) if active_rules else "None"}
+
+Final Grid Cost:
+{total_cost} BDT
+
+Write one concise sentence summarizing the optimization result.
+"""
+
+    try:
+        result = text_to_text(
+            input_text="Generate the final optimization summary.",
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            model="gemini-2.5-flash",
+        )
+
+        if result:
+            return str(result).strip()
+
+    except Exception:
+        pass
+
+    # Safe fallback if Gemini fails
+    rule_str = (
+        f" while maintaining {', '.join(active_rules)}."
+        if active_rules
+        else "."
+    )
+
+    return (
+        f"{status_msg} "
+        f"Optimized energy schedule applied successfully"
+        f"{rule_str}"
+    )
+
+
+def process_scenario_endpoint(
+    scenario_id: str,
+    hours_data: List[Any],
+    battery: Any,
+    directive_interpretations: List[Any],
+) -> Dict[str, Any]:
+    """
+    Run the energy optimizer, generate the Gemini summary,
+    and return the final API response dictionary.
+    """
+
+    # ---------------------------------------------------------
+    # 1. Run mathematical optimization
+    # ---------------------------------------------------------
+
+    (
+        plan,
+        total_grid,
+        total_cost,
+        peak_grid,
+        status_msg,
+    ) = solve_energy_schedule(
+        hours_data,
+        battery,
+        directive_interpretations,
+    )
+
+    # ---------------------------------------------------------
+    # 2. Generate final plan summary
+    # ---------------------------------------------------------
+
+    summary_text = generate_plan_summary_with_gemini(
+        status_msg=status_msg,
+        directives=directive_interpretations,
+        total_cost=total_cost,
+    )
+
+    # ---------------------------------------------------------
+    # 3. Final API response
+    # ---------------------------------------------------------
+
+    return {
+        "scenario_id": scenario_id,
+        "directive_interpretation": directive_interpretations,
+        "hourly_plan": plan,
+        "total_grid_kwh": total_grid,
+        "total_cost_bdt": total_cost,
+        "peak_grid_kwh": peak_grid,
+        "plan_summary": summary_text,
+    }

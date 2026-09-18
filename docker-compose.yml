@@ -1,0 +1,12 @@
+services:
+  api:
+    build: .
+    container_name: gridwise-api
+
+    ports:
+      - "8000:8000"
+
+    env_file:
+      - .env
+
+    restart: unless-stopped

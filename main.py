@@ -7,14 +7,11 @@ from models import (
 
 from llm_interpreter import (
     interpret_operator_notes,
+    process_scenario_endpoint,
 )
 
 from guardrails import (
     validate_directives,
-)
-
-from optimizer import (
-    solve_energy_schedule,
 )
 
 
@@ -42,8 +39,9 @@ def optimize_energy(
     scenario: ScenarioInput,
 ):
     """
-    Interpret operator notes, validate the resulting directives,
-    and generate the optimal 24-hour energy schedule.
+    Interpret operator notes, validate the directives,
+    run the energy optimizer, generate the plan summary,
+    and return the final response.
     """
 
     # ---------------------------------------------------------
@@ -55,12 +53,10 @@ def optimize_energy(
 
     for attempt in range(MAX_LLM_ATTEMPTS):
         try:
-            # Gemini interprets the operator notes
             directives = interpret_operator_notes(
                 scenario.operator_notes
             )
 
-            # Validate Gemini output
             directives = validate_directives(
                 directives=directives,
                 expected_count=len(
@@ -68,7 +64,6 @@ def optimize_energy(
                 ),
             )
 
-            # Validation successful
             break
 
         except ValueError as exc:
@@ -85,17 +80,18 @@ def optimize_energy(
                 ) from exc
 
     # ---------------------------------------------------------
-    # 2. Deterministic optimization
+    # 2. Optimization + final response
     # ---------------------------------------------------------
 
     try:
-        (
-           plan, total_grid, total_cost, peak_grid, _
-        ) = solve_energy_schedule(
+        result = process_scenario_endpoint(
+            scenario_id=scenario.scenario_id,
             hours_data=scenario.hours,
             battery=scenario.battery,
-            directives=directives,
+            directive_interpretations=directives,
         )
+
+        return ScenarioOutput(**result)
 
     except ValueError as exc:
         raise HTTPException(
@@ -108,17 +104,3 @@ def optimize_energy(
             status_code=500,
             detail="Internal optimization error.",
         ) from exc
-
-    # ---------------------------------------------------------
-    # 3. Final response
-    # ---------------------------------------------------------
-
-    return ScenarioOutput(
-        scenario_id=scenario.scenario_id,
-        directive_interpretation=directives,
-        hourly_plan=plan,
-        total_grid_kwh=total_grid,
-        total_cost_bdt=total_cost,
-        peak_grid_kwh=peak_grid,
-        plan_summary="",
-    )
